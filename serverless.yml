@@ -1,0 +1,115 @@
+# "org" ensures this Service is used with the correct Serverless Framework Access Key.
+org: brunooborges
+# "service" is the name of this project. This will also be added to your AWS resource names.
+service: foodiary-api
+
+plugins:
+  - serverless-offline
+
+provider:
+  name: aws
+  region: us-east-1
+  runtime: nodejs22.x
+  architecture: arm64
+  environment:
+    DATABASE_URL: ${env:DATABASE_URL}
+    JWT_SECRET: ${env:JWT_SECRET}
+    OPENAI_API_KEY: ${env:OPENAI_API_KEY}
+    BUCKET_NAME: !Ref UploadsBucket
+    MEALS_QUEUE_URL: !Ref MealsQueue
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - s3:PutObject
+            - s3:GetObject
+          Resource: !Sub '${UploadsBucket.Arn}/*'
+        - Effect: Allow
+          Action: sqs:SendMessage
+          Resource: !GetAtt MealsQueue.Arn
+
+package:
+  individually: true
+
+build:
+  esbuild:
+    minify: true
+    sourcemap: false
+
+functions:
+  signin:
+    handler: src/functions/signin.handler
+    events:
+      - httpApi:
+          method: POST
+          path: /signin
+  signup:
+    handler: src/functions/signup.handler
+    events:
+      - httpApi:
+          method: POST
+          path: /signup
+  me:
+    handler: src/functions/me.handler
+    events:
+      - httpApi:
+          method: GET
+          path: /me
+  createMeal:
+    handler: src/functions/createMeal.handler
+    events:
+      - httpApi:
+          method: POST
+          path: /meals
+  listMeals:
+    handler: src/functions/listMeals.handler
+    events:
+      - httpApi:
+          method: GET
+          path: /meals
+  getMealById:
+    handler: src/functions/getMealById.handler
+    events:
+      - httpApi:
+          method: GET
+          path: /meals/{mealId}
+  fileUploadedEvent:
+    handler: src/functions/fileUploadedEvent.handler
+    events:
+      - s3:
+          bucket: !Ref UploadsBucket
+          event: s3:ObjectCreated:*
+          existing: true
+          forceDeploy: true
+  processMeal:
+    handler: src/functions/processMeal.handler
+    events:
+      - sqs:
+          arn: !GetAtt MealsQueue.Arn
+          batchSize: 1
+
+resources:
+  Resources:
+    UploadsBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: foodiary-brunoborges-uploads
+    MealsQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: foodiary-meals-queue
+        VisibilityTimeout: 60
+        RedrivePolicy:
+          maxReceiveCount: 1
+          deadLetterTargetArn: !GetAtt MealsDLQ.Arn
+    MealsDLQ:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: foodiary-meals-queue-dlq
+
+#BucketName: foodiary-bucket-${self:provider.region}-${self:service}-${opt:stage, 'dev'}
+
+
+
+
