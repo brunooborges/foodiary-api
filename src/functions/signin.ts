@@ -1,11 +1,4 @@
-import { APIGatewayProxyEventV2 } from 'aws-lambda';
-
 import { SignInController } from '../controllers/SignInController';
-import { parseEvent } from '../utils/parseEvent';
-import { parseResponse } from '../utils/parseResponse';
+import { createPublicHandler } from '../utils/createHandler';
 
-export async function handler(event: APIGatewayProxyEventV2) {
-  const request = parseEvent(event);
-  const response = await SignInController.handle(request);
-  return parseResponse(response);
-}
+export const handler = createPublicHandler(SignInController);
