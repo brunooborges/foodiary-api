@@ -26,9 +26,23 @@ export function unauthorized(body?: Record<string, any>): HttpResponse {
   };
 }
 
+export function forbidden(body?: Record<string, any>): HttpResponse {
+  return {
+    statusCode: 403,
+    body,
+  };
+}
+
 export function conflict(body?: Record<string, any>): HttpResponse {
   return {
     statusCode: 409,
+    body,
+  };
+}
+
+export function internalServerError(body?: Record<string, any>): HttpResponse {
+  return {
+    statusCode: 500,
     body,
   };
 }

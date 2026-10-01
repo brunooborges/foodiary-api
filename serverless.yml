@@ -14,7 +14,8 @@ provider:
   environment:
     DATABASE_URL: ${env:DATABASE_URL}
     JWT_SECRET: ${env:JWT_SECRET}
-    OPENAI_API_KEY: ${env:OPENAI_API_KEY}
+    MAX_AUDIO_FILE_BYTES: ${env:MAX_AUDIO_FILE_BYTES, '5242880'}
+    MAX_IMAGE_FILE_BYTES: ${env:MAX_IMAGE_FILE_BYTES, '8388608'}
     BUCKET_NAME: !Ref UploadsBucket
     MEALS_QUEUE_URL: !Ref MealsQueue
   iam:
@@ -74,6 +75,24 @@ functions:
       - httpApi:
           method: GET
           path: /meals/{mealId}
+  getConsent:
+    handler: src/functions/getConsent.handler
+    events:
+      - httpApi:
+          method: GET
+          path: /consent
+  acceptConsent:
+    handler: src/functions/acceptConsent.handler
+    events:
+      - httpApi:
+          method: POST
+          path: /consent
+  withdrawConsent:
+    handler: src/functions/withdrawConsent.handler
+    events:
+      - httpApi:
+          method: DELETE
+          path: /consent
   fileUploadedEvent:
     handler: src/functions/fileUploadedEvent.handler
     events:
@@ -84,6 +103,14 @@ functions:
           forceDeploy: true
   processMeal:
     handler: src/functions/processMeal.handler
+    timeout: 90
+    # The AI provider keys are only needed here; the HTTP functions never call a provider.
+    environment:
+      OPENAI_API_KEY: ${env:OPENAI_API_KEY, ''}
+      OPENROUTER_API_KEY: ${env:OPENROUTER_API_KEY, ''}
+      AI_DEFAULT_PROVIDER: ${env:AI_DEFAULT_PROVIDER, 'openai'}
+      OPENROUTER_MODEL: ${env:OPENROUTER_MODEL, ''}
+      OPENROUTER_AUDIO_MODEL: ${env:OPENROUTER_AUDIO_MODEL, ''}
     events:
       - sqs:
           arn: !GetAtt MealsQueue.Arn
@@ -99,7 +126,7 @@ resources:
       Type: AWS::SQS::Queue
       Properties:
         QueueName: foodiary-meals-queue
-        VisibilityTimeout: 60
+        VisibilityTimeout: 120
         RedrivePolicy:
           maxReceiveCount: 1
           deadLetterTargetArn: !GetAtt MealsDLQ.Arn

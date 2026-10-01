@@ -1,15 +1,15 @@
 import { APIGatewayProxyEventV2 } from 'aws-lambda';
 import { validateAccessToken } from '../lib/jwt';
 import { ProtectedHttpRequest } from '../types/Http';
+import { UnauthorizedError } from './httpErrors';
 import { parseEvent } from './parseEvent';
 
 export function parseProtectedEvent(event: APIGatewayProxyEventV2): ProtectedHttpRequest {
-  const baseEvent = parseEvent(event);
-
+  // Authentication comes first: an anonymous caller must get 401 whatever the body looks like.
   const { authorization } = event.headers;
 
   if (!authorization) {
-    throw new Error('Access token not provided.');
+    throw new UnauthorizedError('Access token not provided.');
   }
 
   const [, accessToken] = authorization.split(' ');
@@ -17,8 +17,10 @@ export function parseProtectedEvent(event: APIGatewayProxyEventV2): ProtectedHtt
   const userId = validateAccessToken(accessToken);
 
   if (!userId) {
-    throw new Error('Invalid access token.');
+    throw new UnauthorizedError();
   }
+
+  const baseEvent = parseEvent(event);
 
   return {
     ...baseEvent,
