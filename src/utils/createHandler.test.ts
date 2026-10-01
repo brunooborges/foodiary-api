@@ -14,6 +14,8 @@ function buildEvent({
     headers: authorization ? { authorization } : {},
     pathParameters: { mealId: 'meal-1' },
     queryStringParameters: { date: '2025-01-15' },
+    routeKey: 'POST /consent',
+    requestContext: { requestId: 'aws-req-1' },
   } as unknown as APIGatewayProxyEventV2;
 }
 
@@ -21,6 +23,7 @@ describe('createHandler', () => {
   beforeEach(() => {
     vi.stubEnv('JWT_SECRET', 'test-secret');
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
   });
 
   afterEach(() => {
@@ -113,6 +116,71 @@ describe('createHandler', () => {
       expect(response.body).not.toContain('db.internal.example');
       expect(JSON.stringify(vi.mocked(console.error).mock.calls)).not.toContain('db.internal.example');
       expect(console.error).toHaveBeenCalled();
+    });
+  });
+
+  describe('logging', () => {
+    it('logs which route failed, the AWS request id and the real database cause of a 500', async () => {
+      // Arrange
+      const databaseError = Object.assign(new Error('relation "user_consents" does not exist'), {
+        name: 'NeonDbError',
+        code: '42P01',
+      });
+      const handle = vi
+        .fn()
+        .mockRejectedValue(Object.assign(new Error('Failed query: params: user-1'), { cause: databaseError }));
+      const handler = createProtectedHandler({ handle });
+      const token = signAccessTokenFor('user-1');
+
+      // Act
+      await handler(buildEvent({ authorization: `Bearer ${token}` }));
+
+      // Assert
+      const [message, details] = vi.mocked(console.error).mock.calls[0];
+      expect(message).toBe('Unhandled error.');
+      expect(details).toMatchObject({
+        route: 'POST /consent',
+        requestId: 'aws-req-1',
+        cause: { code: '42P01', message: 'relation "user_consents" does not exist' },
+      });
+      expect(JSON.stringify(details)).not.toContain('user-1');
+    });
+
+    it('logs a rejected token as a warning with the route, without the token', async () => {
+      // Arrange
+      const handler = createProtectedHandler({ handle: vi.fn() });
+
+      // Act
+      await handler(buildEvent({ authorization: 'Bearer not-a-real-token' }));
+
+      // Assert
+      const [message, details] = vi.mocked(console.warn).mock.calls[0];
+      expect(message).toBe('Request rejected.');
+      expect(details).toMatchObject({ route: 'POST /consent', requestId: 'aws-req-1', status: 401 });
+      expect(JSON.stringify(vi.mocked(console.warn).mock.calls)).not.toContain('not-a-real-token');
+    });
+
+    it('logs a malformed body as a warning', async () => {
+      // Arrange
+      const handler = createPublicHandler({ handle: vi.fn() });
+
+      // Act
+      await handler(buildEvent({ body: '{oops' }));
+
+      // Assert
+      expect(vi.mocked(console.warn).mock.calls[0][1]).toMatchObject({ route: 'POST /consent', status: 400 });
+    });
+
+    it('still works when the event carries no request context', async () => {
+      // Arrange
+      const handler = createPublicHandler({ handle: vi.fn().mockRejectedValue(new Error('boom')) });
+      const event = { body: '{}', headers: {} } as unknown as APIGatewayProxyEventV2;
+
+      // Act
+      const response = await handler(event);
+
+      // Assert
+      expect(response.statusCode).toBe(500);
     });
   });
 
