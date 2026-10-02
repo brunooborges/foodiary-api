@@ -215,8 +215,10 @@ describe('ProcessMeal', () => {
       vi.mocked(console.log).mock.calls,
     ]);
     expect(logged).toContain('meal-1');
+    expect(logged).toContain('"provider":"openrouter"');
     expect(logged).toContain('404');
     expect(logged).toContain('req-123');
+    expect(logged).toContain('could not fetch [url]');
     expect(logged).not.toContain('X-Amz-Signature');
     expect(logged).not.toContain('topsecret');
     expect(logged).not.toContain('user content echoed back');
@@ -302,6 +304,20 @@ describe('ProcessMeal', () => {
       // Assert
       expect(mocks.set).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'success' }));
     });
+  });
+
+  it('does not name a provider in the log when the failure happened before one was chosen', async () => {
+    // Arrange
+    mocks.consentFindFirst.mockResolvedValue(undefined);
+    mocks.mealFindFirst.mockResolvedValue(buildMeal());
+
+    // Act
+    await ProcessMeal.process({ fileKey: 'file.jpg' });
+
+    // Assert
+    const [, details] = vi.mocked(console.error).mock.calls[0];
+    expect(details).toMatchObject({ mealId: 'meal-1', name: 'ConsentRequiredError' });
+    expect(details).not.toHaveProperty('provider');
   });
 
   it('marks the meal as failed when the chosen provider is not configured', async () => {
