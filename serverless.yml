@@ -111,6 +111,7 @@ functions:
       AI_DEFAULT_PROVIDER: ${env:AI_DEFAULT_PROVIDER, 'openai'}
       OPENROUTER_MODEL: ${env:OPENROUTER_MODEL, ''}
       OPENROUTER_AUDIO_MODEL: ${env:OPENROUTER_AUDIO_MODEL, ''}
+      OPENROUTER_DATA_COLLECTION: ${env:OPENROUTER_DATA_COLLECTION, 'deny'}
     events:
       - sqs:
           arn: !GetAtt MealsQueue.Arn
