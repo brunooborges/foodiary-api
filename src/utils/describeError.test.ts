@@ -17,15 +17,41 @@ describe('describeError', () => {
     // Act
     const details = describeError(error);
 
-    // Assert
+    // Assert: the message of a 4xx is kept (it says what the provider rejected) but any URL in it is redacted.
     expect(details).toEqual({
       name: 'Error',
       status: 404,
       code: 'provider_error',
       requestId: 'req-123',
+      message: '404 could not fetch [url]',
     });
     expect(JSON.stringify(details)).not.toContain('topsecret');
+    expect(JSON.stringify(details)).not.toContain('X-Amz-Signature');
     expect(JSON.stringify(details)).not.toContain('user content echoed back');
+  });
+
+  it('keeps the reason a provider gave for rejecting a request (4xx), cleaned and shortened', () => {
+    // Arrange
+    const reason = `Invalid input_audio.format 'm4a'.\n\n  Supported: wav, mp3 ${'x'.repeat(400)}`;
+    const error = OpenAI.APIError.generate(400, { error: { message: reason } }, reason, new Headers());
+
+    // Act
+    const details = describeError(error);
+
+    // Assert
+    expect(details.status).toBe(400);
+    expect(details.message).toContain("Invalid input_audio.format 'm4a'. Supported: wav, mp3");
+    expect(details.message).not.toMatch(/\s{2,}|\n/);
+    expect(details.message!.length).toBeLessThanOrEqual(200);
+  });
+
+  it('does not keep the message of a server error or of an error without a status', () => {
+    // Arrange
+    const serverError = OpenAI.APIError.generate(500, { error: { message: 'secret detail' } }, 'secret detail', new Headers());
+
+    // Act & Assert
+    expect(describeError(serverError)).not.toHaveProperty('message');
+    expect(describeError(new Error('secret detail'))).not.toHaveProperty('message');
   });
 
   it('exposes the database error hidden behind the query error that drizzle wraps it in', () => {

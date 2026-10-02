@@ -2,7 +2,7 @@ import OpenAI from 'openai';
 
 import { AI_PROVIDER_NAMES, AiProviderName } from '../../types/AiProvider';
 import { createOpenAiProvider } from './openaiProvider';
-import { createOpenRouterProvider } from './openrouterProvider';
+import { createOpenRouterProvider, DataCollection } from './openrouterProvider';
 import { AiProvider } from './types';
 
 export type { MealDetails } from './mealDetails';
@@ -14,7 +14,9 @@ const DEFAULT_PROVIDER: AiProviderName = 'openai';
 const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
 const OPENROUTER_APP_TITLE = 'Foodiary';
 const DEFAULT_OPENROUTER_MODEL = 'openai/gpt-4.1-mini';
-const DEFAULT_OPENROUTER_AUDIO_MODEL = 'google/gemini-2.5-flash';
+// Voice notes need a speech-to-text model: OpenRouter rejects those on chat completions and chat models are not
+// accepted by its transcription endpoint.
+const DEFAULT_OPENROUTER_AUDIO_MODEL = 'openai/whisper-1';
 
 // The meal worker Lambda has a hard timeout (see serverless.yml). Failing fast inside the worker lets it
 // mark the meal as failed instead of being killed mid-request and leaving it stuck in "processing".
@@ -27,6 +29,11 @@ const API_KEY_VARIABLE: Record<AiProviderName, string> = {
   openai: 'OPENAI_API_KEY',
   openrouter: 'OPENROUTER_API_KEY',
 };
+
+// Only the exact value "allow" relaxes the privacy setting; a typo or any other value keeps it on "deny".
+export function resolveDataCollection(env: Env = process.env): DataCollection {
+  return env.OPENROUTER_DATA_COLLECTION?.trim().toLowerCase() === 'allow' ? 'allow' : 'deny';
+}
 
 export function isAiProviderName(value: unknown): value is AiProviderName {
   return AI_PROVIDER_NAMES.some((name) => name === value);
@@ -66,6 +73,7 @@ export function getAiProvider(name: AiProviderName, env: Env = process.env): AiP
     return createOpenRouterProvider(client, {
       model: env.OPENROUTER_MODEL || DEFAULT_OPENROUTER_MODEL,
       audioModel: env.OPENROUTER_AUDIO_MODEL || DEFAULT_OPENROUTER_AUDIO_MODEL,
+      dataCollection: resolveDataCollection(env),
     });
   }
 

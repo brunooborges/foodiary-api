@@ -1,20 +1,22 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const openAiConstructor = vi.fn();
+const clients = vi.hoisted(() => [] as { audio: { transcriptions: { create: ReturnType<typeof vi.fn> } } }[]);
 
 vi.mock('openai', () => ({
   default: class FakeOpenAI {
     chat = { completions: { create: vi.fn() } };
-    audio = { transcriptions: { create: vi.fn() } };
+    audio = { transcriptions: { create: vi.fn().mockResolvedValue({ text: 'olá' }) } };
 
     constructor(options: unknown) {
       openAiConstructor(options);
+      clients.push(this);
     }
   },
   toFile: vi.fn(),
 }));
 
-import { getAiProvider, isProviderConfigured, resolveProviderName } from './index';
+import { getAiProvider, isProviderConfigured, resolveDataCollection, resolveProviderName } from './index';
 
 describe('ai provider factory', () => {
   beforeEach(() => {
@@ -60,6 +62,24 @@ describe('ai provider factory', () => {
     });
   });
 
+  describe('resolveDataCollection', () => {
+    it('denies data collection by default', () => {
+      expect(resolveDataCollection({})).toBe('deny');
+      expect(resolveDataCollection({ OPENROUTER_DATA_COLLECTION: '' })).toBe('deny');
+    });
+
+    it('allows it only when explicitly set to allow', () => {
+      expect(resolveDataCollection({ OPENROUTER_DATA_COLLECTION: 'allow' })).toBe('allow');
+      expect(resolveDataCollection({ OPENROUTER_DATA_COLLECTION: ' Allow ' })).toBe('allow');
+    });
+
+    it('keeps denying for any other value, so a typo never loosens the privacy setting', () => {
+      for (const value of ['deny', 'true', '1', 'yes', 'allow-all', 'allowed']) {
+        expect(resolveDataCollection({ OPENROUTER_DATA_COLLECTION: value })).toBe('deny');
+      }
+    });
+  });
+
   describe('isProviderConfigured', () => {
     it('requires the matching API key', () => {
       expect(isProviderConfigured('openai', { OPENAI_API_KEY: 'sk-test' })).toBe(true);
@@ -98,6 +118,33 @@ describe('ai provider factory', () => {
       expect(() => getAiProvider('openrouter', {})).toThrow('openrouter is not configured');
       expect(() => getAiProvider('openai', { OPENAI_API_KEY: '' })).toThrow('openai is not configured');
       expect(openAiConstructor).not.toHaveBeenCalled();
+    });
+
+    it('defaults to a speech-to-text model for OpenRouter voice notes, since chat models cannot transcribe', async () => {
+      // Act
+      const provider = getAiProvider('openrouter', { OPENROUTER_API_KEY: 'or-test' });
+      await provider.transcribeAudio(Buffer.from('audio-bytes'));
+
+      // Assert
+      const client = clients[clients.length - 1];
+      expect(client.audio.transcriptions.create).toHaveBeenCalledWith(
+        expect.objectContaining({ model: 'openai/whisper-1' }),
+      );
+    });
+
+    it('uses the speech-to-text model configured for OpenRouter', async () => {
+      // Act
+      const provider = getAiProvider('openrouter', {
+        OPENROUTER_API_KEY: 'or-test',
+        OPENROUTER_AUDIO_MODEL: 'openai/whisper-large-v3',
+      });
+      await provider.transcribeAudio(Buffer.from('audio-bytes'));
+
+      // Assert
+      const client = clients[clients.length - 1];
+      expect(client.audio.transcriptions.create).toHaveBeenCalledWith(
+        expect.objectContaining({ model: 'openai/whisper-large-v3' }),
+      );
     });
 
     it('returns a provider exposing the three meal operations', () => {

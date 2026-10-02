@@ -9,11 +9,14 @@ const mealJson = JSON.stringify({
   foods: [{ name: 'Pão francês', quantity: '50g', calories: 150, carbohydrates: 29, proteins: 4.5, fats: 1.5 }],
 });
 
-const options = { model: 'openai/gpt-4.1-mini', audioModel: 'google/gemini-2.5-flash' };
+const options = { model: 'openai/gpt-4.1-mini', audioModel: 'openai/whisper-large-v3' };
 
-function createFakeClient(content: string | null = mealJson) {
+function createFakeClient({
+  content = mealJson as string | null,
+  transcription = { text: 'eu comi pão com café' } as { text?: string },
+} = {}) {
   const chatCreate = vi.fn().mockResolvedValue({ choices: [{ message: { content } }] });
-  const transcriptionsCreate = vi.fn();
+  const transcriptionsCreate = vi.fn().mockResolvedValue(transcription);
 
   const client = {
     chat: { completions: { create: chatCreate } },
@@ -43,7 +46,7 @@ describe('createOpenRouterProvider', () => {
 
     it('accepts a response wrapped in a code fence, which some models add', async () => {
       // Arrange
-      const { client } = createFakeClient(`\`\`\`json\n${mealJson}\n\`\`\``);
+      const { client } = createFakeClient({ content: `\`\`\`json\n${mealJson}\n\`\`\`` });
       const provider = createOpenRouterProvider(client, options);
 
       // Act
@@ -55,7 +58,7 @@ describe('createOpenRouterProvider', () => {
 
     it('throws when the model returns no content', async () => {
       // Arrange
-      const { client } = createFakeClient(null);
+      const { client } = createFakeClient({ content: null });
       const provider = createOpenRouterProvider(client, options);
 
       // Act & Assert
@@ -79,6 +82,22 @@ describe('createOpenRouterProvider', () => {
     expect(chatCreate.mock.calls[1][0].provider).toEqual({ data_collection: 'deny' });
   });
 
+  it('can be told to allow providers that collect data, for testing only, for meal text and photos', async () => {
+    // Arrange
+    const { client, chatCreate } = createFakeClient();
+    const provider = createOpenRouterProvider(client, { ...options, dataCollection: 'allow' });
+
+    // Act
+    await provider.getMealDetailsFromText({ text: 'x', createdAt: new Date() });
+    await provider.getMealDetailsFromImage({ imageURL: 'https://example.com/meal.jpg', createdAt: new Date() });
+
+    // Assert
+    expect(chatCreate).toHaveBeenCalledTimes(2);
+    for (const [request] of chatCreate.mock.calls) {
+      expect(request.provider).toEqual({ data_collection: 'allow' });
+    }
+  });
+
   describe('getMealDetailsFromImage', () => {
     it('sends the image URL to the configured model', async () => {
       // Arrange
@@ -99,45 +118,47 @@ describe('createOpenRouterProvider', () => {
   });
 
   describe('transcribeAudio', () => {
-    it('sends the audio as base64 input_audio to the audio model, never to /audio/transcriptions', async () => {
+    it('uses the OpenRouter transcription endpoint with the configured speech-to-text model, in Portuguese', async () => {
       // Arrange
-      const { client, chatCreate, transcriptionsCreate } = createFakeClient('  eu comi pão com café  ');
+      const { client, chatCreate, transcriptionsCreate } = createFakeClient({
+        transcription: { text: '  eu comi pão com café  ' },
+      });
       const provider = createOpenRouterProvider(client, options);
-      const audio = Buffer.from('audio-bytes');
 
       // Act
-      const transcription = await provider.transcribeAudio(audio);
+      const transcription = await provider.transcribeAudio(Buffer.from('audio-bytes'));
 
       // Assert
       expect(transcription).toBe('eu comi pão com café');
-      expect(transcriptionsCreate).not.toHaveBeenCalled();
+      expect(chatCreate).not.toHaveBeenCalled();
 
-      const request = chatCreate.mock.calls[0][0];
-      expect(request.model).toBe('google/gemini-2.5-flash');
-
-      const parts = request.messages[0].content;
-      expect(parts).toContainEqual(expect.objectContaining({ type: 'text' }));
-      expect(parts).toContainEqual({
-        type: 'input_audio',
-        input_audio: { data: audio.toString('base64'), format: 'm4a' },
-      });
+      const request = transcriptionsCreate.mock.calls[0][0];
+      expect(request.model).toBe('openai/whisper-large-v3');
+      expect(request.language).toBe('pt');
+      expect(request.file.name).toBe('audio.m4a');
     });
 
-    it('opts out of upstream providers that store or train on the audio', async () => {
+    it('does not send chat-only options to the transcription endpoint', async () => {
       // Arrange
-      const { client, chatCreate } = createFakeClient('transcrição');
+      const { client, transcriptionsCreate } = createFakeClient();
       const provider = createOpenRouterProvider(client, options);
 
       // Act
       await provider.transcribeAudio(Buffer.from('audio-bytes'));
 
-      // Assert
-      expect(chatCreate.mock.calls[0][0].provider).toEqual({ data_collection: 'deny' });
+      // Assert: routing preferences are not applied to transcription requests, so none are sent.
+      const request = transcriptionsCreate.mock.calls[0][0];
+      expect(request).not.toHaveProperty('provider');
+      expect(request).not.toHaveProperty('messages');
+      expect(request).not.toHaveProperty('response_format');
     });
 
-    it('throws when the audio model returns an empty transcription', async () => {
+    it.each([
+      ['empty', { text: '   ' }],
+      ['missing', {}],
+    ])('throws when the transcription is %s', async (_label, transcription) => {
       // Arrange
-      const { client } = createFakeClient('   ');
+      const { client } = createFakeClient({ transcription });
       const provider = createOpenRouterProvider(client, options);
 
       // Act & Assert

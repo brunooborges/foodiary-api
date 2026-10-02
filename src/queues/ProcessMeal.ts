@@ -8,6 +8,7 @@ import { mealsTable, userSettingsTable } from '../db/schema';
 import { hasValidConsent } from '../lib/consent';
 import { getMaxFileBytes, UploadInputType } from '../lib/uploadLimits';
 import { getAiProvider, MealDetails, resolveProviderName } from '../services/ai';
+import { AiProviderName } from '../types/AiProvider';
 import { describeError } from '../utils/describeError';
 
 class ConsentRequiredError extends Error {
@@ -50,6 +51,9 @@ export class ProcessMeal {
       return;
     }
 
+    // Remembered for the failure log, so it says which provider a failed meal was sent to.
+    let providerName: AiProviderName | undefined;
+
     try {
       // Consent can be withdrawn between the upload and the processing, so it is checked again here.
       if (!(await hasValidConsent(meal.userId))) {
@@ -59,7 +63,8 @@ export class ProcessMeal {
       await this.assertFileWithinLimit(meal.inputFileKey, meal.inputType);
 
       const savedProvider = await this.findSavedAiProvider(meal.userId);
-      const ai = getAiProvider(resolveProviderName(savedProvider));
+      providerName = resolveProviderName(savedProvider);
+      const ai = getAiProvider(providerName);
 
       let icon = '';
       let name = '';
@@ -100,7 +105,11 @@ export class ProcessMeal {
         })
         .where(eq(mealsTable.id, meal.id));
     } catch (error) {
-      console.error('Failed to process meal.', { mealId: meal.id, ...describeError(error) });
+      console.error('Failed to process meal.', {
+        mealId: meal.id,
+        ...(providerName && { provider: providerName }),
+        ...describeError(error),
+      });
       await db.update(mealsTable).set({ status: 'failed' }).where(eq(mealsTable.id, meal.id));
     }
   }
